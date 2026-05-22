@@ -1,0 +1,5 @@
+streamlit
+groq
+openpyxl
+python-pptx
+python-docx
