@@ -197,7 +197,7 @@ Always return only JSON. Never include markdown fences or extra text."""
 def call_llm(prompt: str) -> dict:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     response = client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.1-8b-instant",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
