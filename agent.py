@@ -34,15 +34,14 @@ def build_excel(data: dict) -> bytes:
         for col_idx, value in enumerate(row, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
 
-    # SUM row for numeric columns
     if rows:
         sum_row = len(rows) + 2
         for col_idx, header in enumerate(headers, start=1):
-            col_values = []
-            for row in rows:
-                val = row[col_idx - 1] if col_idx - 1 < len(row) else None
-                if isinstance(val, (int, float)):
-                    col_values.append(val)
+            col_values = [
+                row[col_idx - 1]
+                for row in rows
+                if col_idx - 1 < len(row) and isinstance(row[col_idx - 1], (int, float))
+            ]
             if col_values:
                 col_letter = ws.cell(row=1, column=col_idx).column_letter
                 cell = ws.cell(
@@ -51,10 +50,9 @@ def build_excel(data: dict) -> bytes:
                     value=f"=SUM({col_letter}2:{col_letter}{sum_row - 1})",
                 )
                 cell.font = Font(bold=True)
-            else:
-                if col_idx == 1:
-                    cell = ws.cell(row=sum_row, column=col_idx, value="Total")
-                    cell.font = Font(bold=True)
+            elif col_idx == 1:
+                cell = ws.cell(row=sum_row, column=col_idx, value="Total")
+                cell.font = Font(bold=True)
 
         for col_idx in range(1, len(headers) + 1):
             ws.column_dimensions[
@@ -74,7 +72,6 @@ def build_powerpoint(data: dict) -> bytes:
     prs = Presentation()
     navy_rgb = RGBColor(0x1F, 0x38, 0x64)
 
-    # Title slide
     title_slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(title_slide_layout)
     slide.background.fill.solid()
@@ -92,11 +89,9 @@ def build_powerpoint(data: dict) -> bytes:
         for run in para.runs:
             run.font.color.rgb = RGBColor(0xCC, 0xCC, 0xCC)
 
-    # Content slides
     content_layout = prs.slide_layouts[1]
     for slide_data in data.get("slides", []):
         slide = prs.slides.add_slide(content_layout)
-
         title_shape = slide.shapes.title
         title_shape.text = slide_data.get("title", "")
         for para in title_shape.text_frame.paragraphs:
@@ -120,7 +115,7 @@ def build_powerpoint(data: dict) -> bytes:
 
 def build_word(data: dict) -> bytes:
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import RGBColor
 
     doc = Document()
 
@@ -141,9 +136,9 @@ def build_word(data: dict) -> bytes:
     return buf.getvalue()
 
 
-# ── LLM prompt ─────────────────────────────────────────────────────────────────
+# ── LLM ────────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a file-generation assistant. Given a user request, respond with ONLY valid JSON (no markdown, no explanation).
+SYSTEM_PROMPT = """You are a file-generation assistant. Think carefully about the user's request, then respond with ONLY valid JSON (no markdown, no explanation).
 
 The JSON must have exactly these fields:
 - "file_type": one of "excel", "powerpoint", or "word"
@@ -194,23 +189,30 @@ For word:
 Always return only JSON. Never include markdown fences or extra text."""
 
 
-def call_llm(prompt: str) -> dict:
+def call_llm(prompt: str, forced_type: str | None) -> tuple[dict, str]:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+    user_msg = prompt
+    if forced_type:
+        user_msg += f"\n\nIMPORTANT: You must produce a {forced_type} file. Set file_type to \"{forced_type}\"."
+
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="deepseek-r1-distill-llama-70b",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_msg},
         ],
         temperature=0.3,
     )
-    raw = response.choices[0].message.content.strip()
 
-    # Strip accidental markdown fences
+    msg = response.choices[0].message
+    raw = msg.content.strip()
+    reasoning = getattr(msg, "reasoning_content", None) or ""
+
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
 
-    return json.loads(raw)
+    return json.loads(raw), reasoning
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
@@ -231,6 +233,15 @@ MIME = {
 
 EXT = {"excel": "xlsx", "powerpoint": "pptx", "word": "docx"}
 
+TYPE_OPTIONS = {
+    "Let AI decide": None,
+    "Excel (.xlsx)": "excel",
+    "PowerPoint (.pptx)": "powerpoint",
+    "Word (.docx)": "word",
+}
+
+TYPE_ICONS = {"excel": "📊", "powerpoint": "📊", "word": "📝", None: "📄"}
+
 
 def main():
     st.set_page_config(page_title="AI File Generator", page_icon="📄", layout="centered")
@@ -243,8 +254,18 @@ def main():
     for col, example in zip(cols, EXAMPLES):
         if col.button(example[:30] + "…", help=example, use_container_width=True):
             st.session_state["prompt"] = example
+            st.session_state.pop("generated", None)
 
     st.divider()
+
+    # File type selector
+    type_choice = st.radio(
+        "File type",
+        list(TYPE_OPTIONS.keys()),
+        horizontal=True,
+        help="Pick a specific format, or let the AI choose based on your prompt.",
+    )
+    forced_type = TYPE_OPTIONS[type_choice]
 
     prompt = st.text_area(
         "Describe your file",
@@ -261,10 +282,15 @@ def main():
             st.warning("Please enter a prompt before generating.")
             st.stop()
 
-        with st.spinner("Generating your file…"):
+        st.session_state.pop("generated", None)
+
+        with st.status("Thinking…", expanded=True) as status:
+            st.write("Reading your request…")
             try:
-                result = call_llm(prompt)
+                result, reasoning = call_llm(prompt, forced_type)
+                st.write("Building the file…")
             except json.JSONDecodeError as e:
+                status.update(label="Failed", state="error")
                 st.error(
                     "The AI returned a response that couldn't be parsed as JSON. "
                     "Try rephrasing your prompt or being more specific."
@@ -273,40 +299,45 @@ def main():
                     st.code(str(e))
                 st.stop()
             except Exception as e:
+                status.update(label="Failed", state="error")
                 st.error(f"Something went wrong while calling the AI: {e}")
                 st.stop()
 
-        file_type = result.get("file_type", "").lower()
-        filename = result.get("filename", "output")
-        data = result.get("data", {})
+            file_type = result.get("file_type", "").lower()
+            filename = result.get("filename", "output")
+            data = result.get("data", {})
 
-        try:
-            if file_type == "excel":
-                file_bytes = build_excel(data)
-            elif file_type == "powerpoint":
-                file_bytes = build_powerpoint(data)
-            elif file_type == "word":
-                file_bytes = build_word(data)
-            else:
-                st.error(f"Unknown file type returned by AI: '{file_type}'")
+            try:
+                if file_type == "excel":
+                    file_bytes = build_excel(data)
+                elif file_type == "powerpoint":
+                    file_bytes = build_powerpoint(data)
+                elif file_type == "word":
+                    file_bytes = build_word(data)
+                else:
+                    status.update(label="Failed", state="error")
+                    st.error(f"Unknown file type returned by AI: '{file_type}'")
+                    st.stop()
+            except Exception as e:
+                status.update(label="Failed", state="error")
+                st.error(f"Failed to build the {file_type} file: {e}")
+                with st.expander("Technical details"):
+                    st.code(str(e))
                 st.stop()
-        except Exception as e:
-            st.error(f"Failed to build the {file_type} file: {e}")
-            with st.expander("Technical details"):
-                st.code(str(e))
-            st.stop()
 
-        # Persist in session state so the download button survives reruns
+            status.update(label="Done!", state="complete", expanded=False)
+
         st.session_state["generated"] = {
             "file_bytes": file_bytes,
             "file_type": file_type,
             "full_filename": f"{filename}.{EXT[file_type]}",
+            "reasoning": reasoning,
             "result": result,
         }
 
-    # Render download button from session state (survives the rerun on click)
     if "generated" in st.session_state:
         g = st.session_state["generated"]
+
         st.success(f"Your **{g['file_type'].capitalize()}** file is ready!")
         st.download_button(
             label=f"⬇️ Download {g['full_filename']}",
@@ -316,8 +347,12 @@ def main():
             use_container_width=True,
         )
 
-        with st.expander("View raw JSON from AI"):
-            st.json(result)
+        if g.get("reasoning"):
+            with st.expander("💭 AI Reasoning — see how it thought through your request"):
+                st.markdown(g["reasoning"])
+
+        with st.expander("🗂 Raw JSON from AI"):
+            st.json(g["result"])
 
 
 if __name__ == "__main__":
