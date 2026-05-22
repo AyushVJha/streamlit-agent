@@ -296,14 +296,23 @@ def main():
                 st.code(str(e))
             st.stop()
 
-        full_filename = f"{filename}.{EXT[file_type]}"
+        # Persist in session state so the download button survives reruns
+        st.session_state["generated"] = {
+            "file_bytes": file_bytes,
+            "file_type": file_type,
+            "full_filename": f"{filename}.{EXT[file_type]}",
+            "result": result,
+        }
 
-        st.success(f"Your **{file_type.capitalize()}** file is ready!")
+    # Render download button from session state (survives the rerun on click)
+    if "generated" in st.session_state:
+        g = st.session_state["generated"]
+        st.success(f"Your **{g['file_type'].capitalize()}** file is ready!")
         st.download_button(
-            label=f"⬇️ Download {full_filename}",
-            data=file_bytes,
-            file_name=full_filename,
-            mime=MIME[file_type],
+            label=f"⬇️ Download {g['full_filename']}",
+            data=g["file_bytes"],
+            file_name=g["full_filename"],
+            mime=MIME[g["file_type"]],
             use_container_width=True,
         )
 
