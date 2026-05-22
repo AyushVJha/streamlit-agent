@@ -215,11 +215,11 @@ def call_llm(prompt: str, forced_type: str | None) -> tuple[dict, str]:
     return json.loads(raw), reasoning
 
 
-# ── UI ─────────────────────────────────────────────────────────────────────────
+# ── Constants ──────────────────────────────────────────────────────────────────
 
 EXAMPLES = [
     "Monthly sales report for 5 products across 4 quarters",
-    "Investor pitch deck for an AI startup with 5 slides",
+    "Investor pitch deck for a SaaS startup with 5 slides",
     "Business proposal for a mobile app development project",
     "Employee performance review spreadsheet for 8 employees",
     "Marketing strategy document with 4 sections",
@@ -234,73 +234,200 @@ MIME = {
 EXT = {"excel": "xlsx", "powerpoint": "pptx", "word": "docx"}
 
 TYPE_OPTIONS = {
-    "Let AI decide": None,
-    "Excel (.xlsx)": "excel",
-    "PowerPoint (.pptx)": "powerpoint",
-    "Word (.docx)": "word",
+    "Auto-detect": None,
+    "Excel": "excel",
+    "PowerPoint": "powerpoint",
+    "Word": "word",
 }
 
-TYPE_ICONS = {"excel": "📊", "powerpoint": "📊", "word": "📝", None: "📄"}
+CSS = """
+<style>
+/* Hide Streamlit chrome */
+#MainMenu, footer, header { visibility: hidden; }
+
+/* Page background */
+.stApp { background: #0f0f0f; }
+
+/* Center and constrain content */
+.block-container {
+    max-width: 680px !important;
+    padding-top: 4rem !important;
+    padding-bottom: 4rem !important;
+}
+
+/* Heading */
+h1 {
+    font-size: 1.6rem !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.02em !important;
+    color: #f5f5f5 !important;
+    margin-bottom: 0.25rem !important;
+}
+
+/* Subheading / caption */
+.stCaption p {
+    color: #888 !important;
+    font-size: 0.9rem !important;
+}
+
+/* Example buttons — subtle ghost style */
+div[data-testid="column"] .stButton button {
+    background: transparent !important;
+    border: 1px solid #2a2a2a !important;
+    color: #aaa !important;
+    font-size: 0.78rem !important;
+    border-radius: 6px !important;
+    padding: 0.35rem 0.5rem !important;
+    transition: border-color 0.15s, color 0.15s;
+}
+div[data-testid="column"] .stButton button:hover {
+    border-color: #555 !important;
+    color: #eee !important;
+}
+
+/* Radio */
+.stRadio label { color: #ccc !important; font-size: 0.88rem !important; }
+.stRadio > div { gap: 0.5rem !important; }
+
+/* Text area */
+.stTextArea textarea {
+    background: #1a1a1a !important;
+    border: 1px solid #2a2a2a !important;
+    border-radius: 8px !important;
+    color: #f0f0f0 !important;
+    font-size: 0.95rem !important;
+    resize: none !important;
+}
+.stTextArea textarea:focus {
+    border-color: #555 !important;
+    box-shadow: none !important;
+}
+.stTextArea label { color: #777 !important; font-size: 0.82rem !important; }
+
+/* Primary generate button */
+div[data-testid="stMainBlockContainer"] > div > div > div > div:not([data-testid="column"]) .stButton button[kind="primary"] {
+    background: #fff !important;
+    color: #000 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 0.9rem !important;
+    letter-spacing: 0.01em !important;
+    padding: 0.6rem 1.2rem !important;
+    transition: background 0.15s;
+}
+div[data-testid="stMainBlockContainer"] > div > div > div > div:not([data-testid="column"]) .stButton button[kind="primary"]:hover {
+    background: #e8e8e8 !important;
+}
+
+/* Download button */
+.stDownloadButton button {
+    background: #1a1a1a !important;
+    border: 1px solid #2a2a2a !important;
+    color: #f0f0f0 !important;
+    border-radius: 8px !important;
+    font-size: 0.9rem !important;
+    font-weight: 500 !important;
+    transition: border-color 0.15s;
+}
+.stDownloadButton button:hover {
+    border-color: #555 !important;
+}
+
+/* Success box */
+.stAlert[data-baseweb="notification"] {
+    background: #0d1f0d !important;
+    border: 1px solid #1a3a1a !important;
+    border-radius: 8px !important;
+    color: #8fcf8f !important;
+}
+
+/* Expanders */
+.streamlit-expanderHeader {
+    background: transparent !important;
+    color: #666 !important;
+    font-size: 0.82rem !important;
+    border: 1px solid #1e1e1e !important;
+    border-radius: 6px !important;
+}
+.streamlit-expanderContent {
+    background: #111 !important;
+    border: 1px solid #1e1e1e !important;
+    border-top: none !important;
+    border-radius: 0 0 6px 6px !important;
+}
+
+/* Status widget */
+[data-testid="stStatusWidget"] {
+    background: #1a1a1a !important;
+    border: 1px solid #2a2a2a !important;
+    border-radius: 8px !important;
+}
+
+/* Divider */
+hr { border-color: #1e1e1e !important; }
+
+/* Warning */
+.stAlert { border-radius: 8px !important; }
+</style>
+"""
 
 
 def main():
-    st.set_page_config(page_title="AI File Generator", page_icon="📄", layout="centered")
+    st.set_page_config(page_title="File Generator", layout="centered")
+    st.markdown(CSS, unsafe_allow_html=True)
 
-    st.title("📄 AI File Generator")
-    st.caption("Describe what you need — get an Excel, PowerPoint, or Word file instantly.")
+    st.title("File Generator")
+    st.caption("Describe what you want — receive a ready-to-download file.")
 
-    st.markdown("**Quick examples:**")
+    # Example prompts
     cols = st.columns(len(EXAMPLES))
     for col, example in zip(cols, EXAMPLES):
-        if col.button(example[:30] + "…", help=example, use_container_width=True):
+        if col.button(example[:28] + "…", help=example, use_container_width=True):
             st.session_state["prompt"] = example
             st.session_state.pop("generated", None)
 
-    st.divider()
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
 
-    # File type selector
     type_choice = st.radio(
-        "File type",
+        "Format",
         list(TYPE_OPTIONS.keys()),
         horizontal=True,
-        help="Pick a specific format, or let the AI choose based on your prompt.",
     )
     forced_type = TYPE_OPTIONS[type_choice]
 
     prompt = st.text_area(
         "Describe your file",
         value=st.session_state.get("prompt", ""),
-        placeholder="e.g. Quarterly budget spreadsheet for a 5-person startup",
-        height=120,
+        placeholder="e.g. Quarterly budget for a 5-person startup",
+        height=110,
         key="prompt_input",
+        label_visibility="collapsed",
     )
 
-    generate = st.button("Generate File", type="primary", use_container_width=True)
+    generate = st.button("Generate", type="primary", use_container_width=True)
 
     if generate:
         if not prompt.strip():
-            st.warning("Please enter a prompt before generating.")
+            st.warning("Enter a description first.")
             st.stop()
 
         st.session_state.pop("generated", None)
 
-        with st.status("Thinking…", expanded=True) as status:
+        with st.status("Working…", expanded=True) as status:
             st.write("Reading your request…")
             try:
                 result, reasoning = call_llm(prompt, forced_type)
-                st.write("Building the file…")
+                st.write("Building file…")
             except json.JSONDecodeError as e:
                 status.update(label="Failed", state="error")
-                st.error(
-                    "The AI returned a response that couldn't be parsed as JSON. "
-                    "Try rephrasing your prompt or being more specific."
-                )
-                with st.expander("Technical details"):
+                st.error("Couldn't parse the model's response. Try rephrasing your prompt.")
+                with st.expander("Details"):
                     st.code(str(e))
                 st.stop()
             except Exception as e:
                 status.update(label="Failed", state="error")
-                st.error(f"Something went wrong while calling the AI: {e}")
+                st.error(str(e))
                 st.stop()
 
             file_type = result.get("file_type", "").lower()
@@ -316,16 +443,14 @@ def main():
                     file_bytes = build_word(data)
                 else:
                     status.update(label="Failed", state="error")
-                    st.error(f"Unknown file type returned by AI: '{file_type}'")
+                    st.error(f"Unexpected file type: '{file_type}'")
                     st.stop()
             except Exception as e:
                 status.update(label="Failed", state="error")
-                st.error(f"Failed to build the {file_type} file: {e}")
-                with st.expander("Technical details"):
-                    st.code(str(e))
+                st.error(f"Failed to build file: {e}")
                 st.stop()
 
-            status.update(label="Done!", state="complete", expanded=False)
+            status.update(label="Done", state="complete", expanded=False)
 
         st.session_state["generated"] = {
             "file_bytes": file_bytes,
@@ -338,9 +463,9 @@ def main():
     if "generated" in st.session_state:
         g = st.session_state["generated"]
 
-        st.success(f"Your **{g['file_type'].capitalize()}** file is ready!")
+        st.success(f"{g['full_filename']} is ready.")
         st.download_button(
-            label=f"⬇️ Download {g['full_filename']}",
+            label=f"Download {g['full_filename']}",
             data=g["file_bytes"],
             file_name=g["full_filename"],
             mime=MIME[g["file_type"]],
@@ -348,10 +473,13 @@ def main():
         )
 
         if g.get("reasoning"):
-            with st.expander("💭 AI Reasoning — see how it thought through your request"):
-                st.markdown(g["reasoning"])
+            with st.expander("Reasoning"):
+                st.markdown(
+                    f"<div style='color:#999;font-size:0.85rem;line-height:1.6'>{g['reasoning']}</div>",
+                    unsafe_allow_html=True,
+                )
 
-        with st.expander("🗂 Raw JSON from AI"):
+        with st.expander("Raw output"):
             st.json(g["result"])
 
 
